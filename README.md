@@ -1,11 +1,11 @@
 # TradingView CSV Datafeed Demo (Public)
 
-Public, non-commercial demo showing:
+Public, non-commercial, no paywall demo showing:
 - CSV → TradingView UDF-style datafeed (/config, /symbols, /search, /history, /time)
 - Demo chart (Lightweight Charts)
 - Intended for evaluation of TradingView Charting Library (non-trading)
-
-Live demo: https://<your-demo>.vercel.app
+  
+Live demo: [https://<your-demo>.vercel.app](https://mayuragravkar-dev.github.io/tv-csv-datafeed-demo)
 
 Run locally:
   npm install
@@ -19,3 +19,5 @@ Use your CSV:
 Notes:
 - This repo is public and non-commercial.
 - Once granted access, the site will embed the TradingView Charting Library using this datafeed.
+
+Contact email: agravkarmayur18@gmail.com
