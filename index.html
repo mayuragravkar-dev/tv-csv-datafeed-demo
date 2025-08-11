@@ -125,7 +125,7 @@
     }
 
     function parseCSV(text) {
-      const lines = text.replace(/\r/g, '\n').split('\n').filter(Boolean);
+      const lines = text.replace(/^\uFEFF/, '').replace(/\r/g, '\n').split('\n').filter(l => l.trim().length);
       if (!lines.length) return [];
       const delim = detectDelimiter(lines[0]);
 
