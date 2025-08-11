@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CSV → TradingView Integration Demo</title>
+  <title>CSV → Chart Demo</title>
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     :root { --bg:#0b0f14; --fg:#e3e7ed; --muted:#8da2b8; --line:#1a2433; }
@@ -12,12 +12,13 @@
     header, footer { padding:12px 16px; border-bottom:1px solid var(--line); }
     header { display:flex; gap:12px; align-items:center; }
     .container { padding:16px; max-width:980px; margin:0 auto; }
-    #chart { height: 70vh; }
+    #chart { height: 70vh; position: relative; }
     a { color:#9ecbff; }
     .pill { background:#141b29; color:#cbd3df; padding:4px 8px; border:1px solid #26324a; border-radius:999px; font-size:12px; }
     .toolbar { display:flex; gap:8px; align-items:center; }
     button { background:#141b29; border:1px solid #26324a; color:#cbd3df; padding:6px 10px; border-radius:6px; cursor:pointer; }
     button.active { background:#2b3955; }
+    #status { position:absolute; top:12px; left:12px; background:#141b29; border:1px solid #26324a; color:#cbd3df; padding:6px 10px; border-radius:6px; font-size:12px; display:none; }
   </style>
 </head>
 <body>
@@ -32,20 +33,24 @@
   </header>
 
   <div class="container">
-    <div id="chart"></div>
+    <div id="chart">
+      <div id="status"></div>
+    </div>
     <p style="color:var(--muted)">
       This public, non‑commercial page demonstrates a CSV‑backed chart. After TradingView grants access,
-      this URL will embed the TradingView Charting Library using the same data. No broker/paywall.
+      this URL will embed the TradingView Charting Library using the same data.
     </p>
   </div>
 
   <footer class="container" style="display:flex;justify-content:space-between;align-items:center">
     <div>Contact: <a href="mailto:you@yourdomain.dev">you@yourdomain.dev</a> • <a href="./privacy.html">Privacy</a></div>
-    <div><a href="https://github.com/yourusername/tv-csv-demo">GitHub repo</a></div>
+    <div><a href="https://github.com/mayuragravkar-dev/tv-csv-datafeed-demo">GitHub repo</a></div>
   </footer>
 
   <script>
     const container = document.getElementById('chart');
+    const statusEl = document.getElementById('status');
+
     const chart = LightweightCharts.createChart(container, {
       layout: { background: { color: '#0b0f14' }, textColor:'#cbd3df' },
       grid: { vertLines: { color:'#152033' }, horzLines: { color:'#152033' } },
@@ -55,61 +60,123 @@
     });
     const series = chart.addCandlestickSeries();
 
+    // Utility: show a small status box
+    function showStatus(msg) {
+      statusEl.textContent = msg;
+      statusEl.style.display = 'inline-block';
+      clearTimeout(showStatus._t);
+      showStatus._t = setTimeout(() => statusEl.style.display = 'none', 4000);
+      console.log('[status]', msg);
+    }
+
+    // Auto-detect delimiter (comma, semicolon, or tab)
+    function detectDelimiter(headerLine) {
+      const counts = {
+        ',': (headerLine.match(/,/g) || []).length,
+        ';': (headerLine.match(/;/g) || []).length,
+        '\t': (headerLine.match(/\t/g) || []).length,
+      };
+      return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0] || ',';
+    }
+
+    // CSV splitting with quotes, accepts dynamic delimiter
+    function splitCSVLine(line, delim) {
+      const out = [];
+      let cur = '', inQ = false;
+      for (let i=0; i<line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+          else inQ = !inQ;
+        } else if (ch === delim && !inQ) {
+          out.push(cur); cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      out.push(cur);
+      return out.map(s => s.trim());
+    }
+
+    // Robust time parser
+    // Accepts:
+    // - Digits only: epoch seconds (10) or ms (13)
+    // - ISO: 2023-11-21T09:15:00Z
+    // - DD-MM-YYYY[T or space]HH:mm[:ss]
+    // - DD/MM/YYYY[T or space]HH:mm[:ss]
+    function parseFlexibleTimeToMs(s) {
+      const v = String(s).trim();
+
+      if (/^\d+$/.test(v)) {
+        return v.length > 10 ? Number(v) : Number(v) * 1000;
+      }
+
+      let t = Date.parse(v);
+      if (Number.isFinite(t)) return t;
+
+      const m = v.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})[T\s](\d{2}):(\d{2})(?::(\d{2}))?$/);
+      if (m) {
+        const [, dd, mm, yyyy, HH, MM, SS] = m;
+        // Interpret as UTC; adjust here if your times are local and you want local
+        return Date.UTC(+yyyy, +mm - 1, +dd, +HH, +MM, +(SS || 0));
+      }
+
+      return NaN;
+    }
+
+    function parseCSV(text) {
+      const lines = text.replace(/\r/g, '\n').split('\n').filter(Boolean);
+      if (!lines.length) return [];
+      const delim = detectDelimiter(lines[0]);
+
+      const headers = splitCSVLine(lines[0], delim).map(s => s.trim().toLowerCase());
+      const find = (cands) => {
+        for (const c of cands) {
+          const i = headers.indexOf(c);
+          if (i !== -1) return i;
+        }
+        return -1;
+      };
+
+      const iT = find(['time','timestamp','date','datetime']);
+      const iO = find(['open','o']);
+      const iH = find(['high','h']);
+      const iL = find(['low','l']);
+      const iC = find(['close','c']);
+      const iV = find(['volume','v']);
+
+      if ([iT,iO,iH,iL,iC].some(i => i < 0)) {
+        showStatus('CSV headers must include: time, open, high, low, close');
+        return [];
+      }
+
+      const bars = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = splitCSVLine(lines[i], delim);
+        if (!cols.length) continue;
+
+        const tMs = parseFlexibleTimeToMs(cols[iT]);
+        const o = parseFloat(cols[iO]);
+        const h = parseFloat(cols[iH]);
+        const l = parseFloat(cols[iL]);
+        const c = parseFloat(cols[iC]);
+        const v = iV >= 0 ? parseFloat(cols[iV]) || 0 : 0;
+
+        if (!Number.isFinite(tMs) || ![o,h,l,c].every(Number.isFinite)) continue;
+        bars.push({ time: Math.floor(tMs/1000), open:o, high:h, low:l, close:c, volume:v });
+      }
+
+      bars.sort((a,b)=>a.time - b.time);
+      return bars;
+    }
+
     function resolutionToSec(res) {
       const s = String(res).toUpperCase();
       if (s === 'D') return 86400;
       if (s === 'W') return 7*86400;
-      if (s.endsWith('H')) return Number(s.replace('H',''))*3600;
-      const n = Number(s); return Number.isFinite(n) ? n*60 : 3600;
-    }
-
-    function splitCSVLine(line){
-      const out=[]; let cur='',q=false;
-      for(let i=0;i<line.length;i++){const ch=line[i];
-        if(ch=='"'){ if(q && line[i+1]=='"'){cur+='"'; i++;} else q=!q; }
-        else if(ch==',' && !q){ out.push(cur); cur=''; }
-        else cur+=ch;
-      }
-      out.push(cur); return out.map(s=>s.trim());
-    }
-
-    function parseCSV(text) {
-      const lines = text.trim().split(/\r?\n/).filter(Boolean);
-      const headers = lines.shift().split(',').map(s => s.trim().toLowerCase());
-      const idx = n => headers.findIndex(h => n.includes(h));
-      const ti = idx(['time','timestamp','date','datetime']);
-      const oi = idx(['open','o']), hi = idx(['high','h']), li = idx(['low','l']), ci = idx(['close','c']);
-      const vi = idx(['volume','v']);
-
-const parseTime = (s) => {
-  const v = String(s).trim();
-  // pure digits: epoch sec or ms
-  if (/^\d+$/.test(v)) return v.length > 10 ? Number(v) : Number(v) * 1000;
-
-  // Try native ISO first
-  let t = Date.parse(v);
-  if (Number.isFinite(t)) return t;
-
-  // Handle DD-MM-YYYY[T or space]HH:mm[:ss]
-  const m = v.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})[T\s](\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m) {
-    const [, dd, mm, yyyy, HH, MM, SS] = m;
-    // Treat as UTC; change to Date if you want local time
-    return Date.UTC(+yyyy, +mm - 1, +dd, +HH, +MM, +(SS || 0));
-  }
-  return NaN;
-};
-
-      const bars = [];
-      for (const line of lines) {
-        const cols = splitCSVLine(line);
-        const t = parseTime(cols[ti]); const o = +cols[oi]; const h = +cols[hi]; const l = +cols[li]; const c = +cols[ci];
-        if (![t,o,h,l,c].every(Number.isFinite)) continue;
-        const v = vi >= 0 ? (+cols[vi] || 0) : 0;
-        bars.push({ time: Math.floor(t/1000), open:o, high:h, low:l, close:c, volume:v });
-      }
-      bars.sort((a,b)=>a.time-b.time);
-      return bars;
+      if (s.endsWith('H')) return Number(s.replace('H','')) * 3600;
+      const n = Number(s);
+      return Number.isFinite(n) ? n * 60 : 3600; // default 1h
     }
 
     function aggregate(bars, resSec) {
@@ -117,22 +184,49 @@ const parseTime = (s) => {
       for (const b of bars) {
         const t0 = Math.floor(b.time / resSec) * resSec;
         const a = buckets.get(t0);
-        if (!a) buckets.set(t0, { time:t0, open:b.open, high:b.high, low:b.low, close:b.close, volume:b.volume||0 });
-        else { a.high=Math.max(a.high,b.high); a.low=Math.min(a.low,b.low); a.close=b.close; a.volume+=(b.volume||0); }
+        if (!a) {
+          buckets.set(t0, { time:t0, open:b.open, high:b.high, low:b.low, close:b.close, volume:b.volume||0 });
+        } else {
+          a.high = Math.max(a.high, b.high);
+          a.low  = Math.min(a.low,  b.low);
+          a.close = b.close;
+          a.volume += (b.volume || 0);
+        }
       }
       return [...buckets.values()].sort((a,b)=>a.time-b.time);
     }
 
     async function load(res='60') {
-      const text = await fetch('data/sample.csv', { cache: 'no-store' }).then(r => r.text());
-      const raw = parseCSV(text);
-      const resSec = resolutionToSec(res);
-      const data = aggregate(raw, resSec).map(b => ({ time:b.time, open:b.open, high:b.high, low:b.low, close:b.close }));
-      series.setData(data);
-      document.querySelectorAll('button').forEach(btn => btn.classList.toggle('active', btn.dataset.res===res));
+      try {
+        showStatus('Loading CSV…');
+        const resp = await fetch('data/sample.csv?nocache=' + Date.now());
+        if (!resp.ok) throw new Error('Failed to fetch CSV: ' + resp.status);
+        const text = await resp.text();
+
+        const raw = parseCSV(text);
+        console.log('rows parsed:', raw.length, raw.slice(0,3));
+        if (!raw.length) {
+          series.setData([]);
+          showStatus('No rows parsed. Check time format and headers.');
+          return;
+        }
+
+        const resSec = resolutionToSec(res);
+        const data = aggregate(raw, resSec).map(b => ({
+          time: b.time,
+          open: b.open, high: b.high, low: b.low, close: b.close
+        }));
+
+        series.setData(data);
+        document.querySelectorAll('button[data-res]').forEach(btn => btn.classList.toggle('active', btn.dataset.res===res));
+        showStatus(`Loaded ${raw.length} rows • showing ${data.length} ${res} bars`);
+      } catch (e) {
+        console.error(e);
+        showStatus(e.message || String(e));
+      }
     }
 
-    // resolution buttons
+    // Resolution buttons
     document.querySelectorAll('button[data-res]').forEach(btn=>{
       btn.addEventListener('click', ()=>load(btn.dataset.res));
     });
