@@ -37,8 +37,7 @@
       <div id="status"></div>
     </div>
     <p style="color:var(--muted)">
-      This public, non‑commercial page demonstrates a CSV‑backed chart. After TradingView grants access,
-      this URL will embed the TradingView Charting Library using the same data.
+      Public, non‑commercial CSV chart demo. After TradingView grants access, this URL will embed the Charting Library using the same data.
     </p>
   </div>
 
@@ -49,7 +48,7 @@
 
   <script>
     const container = document.getElementById('chart');
-    const statusEl = document.getElementById('status');
+    const statusEl  = document.getElementById('status');
 
     const chart = LightweightCharts.createChart(container, {
       layout: { background: { color: '#0b0f14' }, textColor:'#cbd3df' },
@@ -60,26 +59,26 @@
     });
     const series = chart.addCandlestickSeries();
 
-    // Utility: show a small status box
     function showStatus(msg) {
       statusEl.textContent = msg;
       statusEl.style.display = 'inline-block';
       clearTimeout(showStatus._t);
-      showStatus._t = setTimeout(() => statusEl.style.display = 'none', 4000);
+      showStatus._t = setTimeout(() => statusEl.style.display = 'none', 5000);
       console.log('[status]', msg);
     }
 
-    // Auto-detect delimiter (comma, semicolon, or tab)
+    // Detect delimiter (supports comma, semicolon, TAB)
     function detectDelimiter(headerLine) {
       const counts = {
         ',': (headerLine.match(/,/g) || []).length,
         ';': (headerLine.match(/;/g) || []).length,
         '\t': (headerLine.match(/\t/g) || []).length,
       };
+      // pick the character with the highest count
       return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0] || ',';
     }
 
-    // CSV splitting with quotes, accepts dynamic delimiter
+    // Split a CSV/TSV line honoring quotes
     function splitCSVLine(line, delim) {
       const out = [];
       let cur = '', inQ = false;
@@ -98,12 +97,11 @@
       return out.map(s => s.trim());
     }
 
-    // Robust time parser
+    // Flexible time parser
     // Accepts:
-    // - Digits only: epoch seconds (10) or ms (13)
-    // - ISO: 2023-11-21T09:15:00Z
-    // - DD-MM-YYYY[T or space]HH:mm[:ss]
-    // - DD/MM/YYYY[T or space]HH:mm[:ss]
+    // - All digits: epoch sec (10) or ms (13)
+    // - ISO like 2023-11-21T09:15:00Z
+    // - DD-MM-YYYY (or DD/MM/YYYY or DD.MM.YYYY) + one or more T or space before time
     function parseFlexibleTimeToMs(s) {
       const v = String(s).trim();
 
@@ -114,29 +112,22 @@
       let t = Date.parse(v);
       if (Number.isFinite(t)) return t;
 
-      const m = v.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})[T\s](\d{2}):(\d{2})(?::(\d{2}))?$/);
+      const m = v.match(/^(\d{2})[-\/.](\d{2})[-\/.](\d{4})[T\s]+(\d{2}):(\d{2})(?::(\d{2}))?$/);
       if (m) {
         const [, dd, mm, yyyy, HH, MM, SS] = m;
-        // Interpret as UTC; adjust here if your times are local and you want local
-        return Date.UTC(+yyyy, +mm - 1, +dd, +HH, +MM, +(SS || 0));
+        return Date.UTC(+yyyy, +mm - 1, +dd, +HH, +MM, +(SS || 0)); // treat as UTC
       }
-
       return NaN;
     }
 
     function parseCSV(text) {
+      // strip BOM, normalize newlines
       const lines = text.replace(/^\uFEFF/, '').replace(/\r/g, '\n').split('\n').filter(l => l.trim().length);
       if (!lines.length) return [];
-      const delim = detectDelimiter(lines[0]);
+      const delim = detectDelimiter(lines[0]); // should be TAB for your file
 
-      const headers = splitCSVLine(lines[0], delim).map(s => s.trim().toLowerCase());
-      const find = (cands) => {
-        for (const c of cands) {
-          const i = headers.indexOf(c);
-          if (i !== -1) return i;
-        }
-        return -1;
-      };
+      const headers = splitCSVLine(lines[0], delim).map(s => s.toLowerCase());
+      const find = (cands) => cands.map(c => headers.indexOf(c)).find(i => i >= 0) ?? -1;
 
       const iT = find(['time','timestamp','date','datetime']);
       const iO = find(['open','o']);
@@ -176,7 +167,7 @@
       if (s === 'W') return 7*86400;
       if (s.endsWith('H')) return Number(s.replace('H','')) * 3600;
       const n = Number(s);
-      return Number.isFinite(n) ? n * 60 : 3600; // default 1h
+      return Number.isFinite(n) ? n * 60 : 3600;
     }
 
     function aggregate(bars, resSec) {
@@ -207,7 +198,7 @@
         console.log('rows parsed:', raw.length, raw.slice(0,3));
         if (!raw.length) {
           series.setData([]);
-          showStatus('No rows parsed. Check time format and headers.');
+          showStatus('No rows parsed. Check time format and delimiters.');
           return;
         }
 
@@ -226,7 +217,6 @@
       }
     }
 
-    // Resolution buttons
     document.querySelectorAll('button[data-res]').forEach(btn=>{
       btn.addEventListener('click', ()=>load(btn.dataset.res));
     });
